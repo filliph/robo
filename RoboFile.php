@@ -5,160 +5,430 @@
  * @see http://robo.li/
  */
 
-require '/www/notifier/vendor/autoload.php';
+//require '/Users/Shared/www/notifier/vendor/autoload.php';
 
-use Joli\JoliNotif\Notification;
-use Joli\JoliNotif\NotifierFactory;
+//use Joli\JoliNotif\Notification;
+//use Joli\JoliNotif\NotifierFactory;
+use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Process\Process;
 
 class RoboFile extends \Robo\Tasks
 {
-	const SERVER = "/www/";
-	const FORUM = "/www/public_html/devboards/";
-	const SVN = "/www/SVN/";
+	const SERVER = "/Users/Shared/www/";
+	const FORUM = "/Users/Shared/www/public_html/devboards/";
+	const GIT = "/Users/Shared/www/git/";
 
-	protected $dirsToScan = array();
-	protected $productId = '';
-	protected $vB3 = NULL;
-	protected $vB4 = NULL;
-	protected $vB5 = NULL;
-
+	protected $dirsToScan = [];
+	
+	/**
+	 *
+	 */
 	public function symlinkCreate()
 	{
 		$this->scanForConfigs();
 		$this->createSymlinks();
-		$this->notify('Symlink Updater', 'Symlinks created successfully.');
+//		$this->notify('Symlink Updater', 'Symlinks created successfully.');
 	}
-
+	
+	/**
+	 * @param array $opts
+	 */
 	public function symlinkClean($opts = ['erase' => false])
 	{
 		$this->cleanSymlinks($opts);
-		$this->notify('Symlink Updater', 'Symlinks ' . ($opts['erase'] ? 'erased' : 'cleaned') . ' successfully.');
+//		$this->notify('Symlink Updater', 'Symlinks ' . ($opts['erase'] ? 'erased' : 'cleaned') . ' successfully.');
 	}
-
+	
+	/**
+	 * @param string $onlyDir
+	 */
 	public function syntaxCheck($onlyDir = '')
 	{
-		$this->scanForConfigs($onlyDir);
+		$this->scanForConfigs($onlyDir, true);
 		$this->checkSyntax();
 	}
-
-	public function release($productId = '')
+	
+	/**
+	 * @param $product
+	 * @param array $opts
+	 */
+	public function commit($product, $opts = ['dir' => NULL])
 	{
-		$this->openDatabaseConnections();
-		//$this->validateProductId($productId);
-		//$this->loadProVersion();
-		//$this->loadLiteVersion();
-		//$this->commitSVN();
-		//$this->tagSVN();
-
-
-		/*
-		if (!$productId)
+		$dir = $opts['dir'] ?: self::GIT . $product;
+		
+		if ($opts['dir'])
 		{
-			// Init this
-			$products = array();
-			$i = 1;
-
-			$res = $vB3->query("
-				SELECT product.productid, product.title
-				FROM vb_dbtech_devtools_product AS devtools
-				LEFT JOIN vb_product AS product ON(product.productid = devtools.product)
-				WHERE devtools.exclude = '0'
-			");
-			while ($product = $res->fetch(PDO::FETCH_ASSOC))
-			{
-				// Index by ID
-				$products[$product['productid']] = $product['title'];
-			}
-
-			$res = $vB4->query("
-				SELECT product.productid, product.title
-				FROM vb_dbtech_devtools_product AS devtools
-				LEFT JOIN vb_product AS product ON(product.productid = devtools.product)
-				WHERE devtools.exclude = '0'
-			");
-			while ($product = $res->fetch(PDO::FETCH_ASSOC))
-			{
-				// Index by id
-				$products[$product['productid']] = $product['title'];
-			}
-
-			// Sort by title
-			asort($products);
-
-			// Now grab our keys
-			$productIds = array_keys($products);
-
-			foreach ($productIds as $i => $product_id)
-			{
-				// Output the product list
-				$this->say("$i) $products[$product_id]");
-			}
-
-			// Request the product from the user
-			$requestedProduct = $this->ask('Enter the key of the product you want to release:');
-
-			if (!isset($products[$requestedProduct]))
-			{
-				// Stop
-				die();
-			}
-
-			// Shorthand
-			$productId = $products[$requestedProduct];
+			// Execute export - move files to repo if possible
+			(new Process("php cmd.php ticktackk-devtools:better-export $product -mspr", self::FORUM . 'xf2'))
+				->run();
 		}
-		*/
+		
+		$process = new Process('git status -s', $dir);
+		$process->run();
+		if ($process->isSuccessful())
+		{
+			$output = $process->getOutput();
+			if ($output)
+			{
+				$this->say($output);
+				
+				$result = $this->taskGitStack()
+					->printOutput(false)
+					->dir($dir)
+					->add('-A')
+					->run()
+				;
+				
+				if ($result->wasSuccessful())
+				{
+					$commitMessage = [];
+					while ($resp = $this->ask("Commit log entry: "))
+					{
+						$commitMessage[] = $resp;
+					}
+					
+					if (!$commitMessage)
+					{
+						// Default message
+						$commitMessage[] = 'Various changes';
+					}
+					
+					$message = \Robo\Common\ProcessUtils::escapeArgument(implode("\n", $commitMessage));
+					
+					$this->taskGitStack()
+						->printOutput(false)
+						->dir($dir)
+						->exec(['commit', '-m $' . $message, ""])
+						->push()
+						->run();
+				}
+			}
+		}
 	}
+	
+	/**
+	 * @param $product
+	 * @param $version
+	 * @param array $opts
+	 */
+	public function release($product, $version, $opts = ['repoDir' => NULL, 'changeLogDir' => NULL])
+	{
+		$ds = DIRECTORY_SEPARATOR;
+		
+		$version = ($version[0] != 'v' ? 'v' : '') . $version;
+		
+		if ($opts['repoDir'])
+		{
+			$repoDir = $opts['repoDir'];
+		}
+		else
+		{
+			$repoDir = self::GIT . $product;
+		}
+		
+		if ($opts['changeLogDir'])
+		{
+			$changelogDir = $opts['changeLogDir'];
+		}
+		else
+		{
+			$changelogDir = $repoDir . $ds . $product;
+		}
+		
+		$this->output()->setVerbosity(OutputInterface::VERBOSITY_QUIET);
+		$this->taskGitStack()
+			->printOutput(false)
+			->dir($repoDir)
+			->exec(['tag', '--delete', $version])
+			->exec(['push', 'origin', ':refs/tags/' . $version])
+			->run()
+		;
+		$this->taskGitStack()
+			->printOutput(false)
+			->dir($repoDir)
+			->exec(['branch', '--delete', 'release/' . $version])
+			->exec(['push', 'origin', '--delete', 'release/' . $version])
+			->run()
+		;
+		$this->output()->setVerbosity(OutputInterface::VERBOSITY_NORMAL);
+		
+		$changelogTask = $this->taskChangelog($changelogDir . $ds . 'CHANGELOG.md')
+			->version($version)
+		;
 
-	protected function scanForConfigs($onlyDir = '')
+		while ($resp = $this->ask("Changed in this release: "))
+		{
+			$changelogTask->change($resp);
+		}
+		
+		if ($changelogTask->getChanges())
+		{
+			$changelogTask->run();
+
+			// Commit change log
+			$this->taskGitStack()
+				->printOutput(false)
+				->dir($repoDir)
+				->add('-A')
+				->commit('Updated changelog / various changes')
+				->push()
+				->run();
+		}
+		
+		if ($opts['repoDir'])
+		{
+			$dir = self::FORUM . 'xf2';
+			/*
+			// Execute bump version here
+			(new Process("php cmd.php xf-addon:bump-version $product --from-json", self::FORUM . 'xf2'))
+				->run();
+			*/
+			
+			// Execute export - move files to repo if possible
+			$this->taskExec('php')
+				->printOutput(false)
+				->dir($dir)
+				->arg("cmd.php")
+				->arg("ticktackk-devtools:better-export")
+				->arg($product)
+				->option('skip-export')
+				->option('skip-tests')
+				->option('release')
+				->run()
+			;
+		}
+		else
+		{
+			$process = new Process('git status -s', $repoDir);
+			$process->run();
+			if ($process->isSuccessful())
+			{
+				$output = $process->getOutput();
+				if ($output)
+				{
+					$this->say($output);
+					
+					$result = $this->taskGitStack()
+						->printOutput(false)
+						->dir($repoDir)
+						->add('-A')
+						->run()
+					;
+					
+					if ($result->wasSuccessful())
+					{
+						$commitMessage = [];
+						while ($resp = $this->ask("Commit log entry: "))
+						{
+							$commitMessage[] = $resp;
+						}
+						
+						if (!$commitMessage)
+						{
+							// Default message
+							$commitMessage[] = 'Various changes';
+						}
+						
+						$message = \Robo\Common\ProcessUtils::escapeArgument(implode("\n", $commitMessage));
+						
+						$this->taskGitStack()
+							->printOutput(false)
+							->dir($repoDir)
+							->exec(['commit', '-m $' . $message, ""])
+							->run()
+						;
+					}
+				}
+			}
+		}
+		
+		$this->taskGitStack()
+			->printOutput(false)
+			->dir($repoDir)
+			->exec(['flow', 'release', 'start', $version])
+			->exec(['flow', 'release', 'publish', $version])
+			->exec(['flow', 'release', 'finish', $version, '-m', $version, '--push', '--keepremote'])
+			->run()
+		;
+	}
+	
+	
+	
+	/**
+	 * @param $product
+	 * @param $version
+	 * @param array $opts
+	 */
+	public function changeLog($product, $version, $opts = ['repoDir' => NULL, 'changeLogDir' => NULL])
+	{
+		$ds = DIRECTORY_SEPARATOR;
+		
+		$version = ($version[0] != 'v' ? 'v' : '') . $version;
+		
+		if ($opts['repoDir'])
+		{
+			$repoDir = $opts['repoDir'];
+		}
+		else
+		{
+			$repoDir = self::GIT . $product;
+		}
+		
+		if ($opts['changeLogDir'])
+		{
+			$changelogDir = $opts['changeLogDir'];
+		}
+		else
+		{
+			$changelogDir = $repoDir . $ds . $product;
+		}
+		
+		$changelogTask = $this->taskChangelog($changelogDir . $ds . 'CHANGELOG.md')
+			->version($version)
+		;
+		
+		while ($resp = $this->ask("Changed in this release: "))
+		{
+			$changelogTask->change($resp);
+		}
+		
+		if ($changelogTask->getChanges())
+		{
+			$changelogTask->run();
+		}
+		
+		if ($opts['changeLogDir'])
+		{
+			// Execute git-move
+			$this->taskExec('php')
+				->printOutput(false)
+				->dir(self::FORUM . 'xf2')
+				->arg("cmd.php")
+				->arg("ticktackk-devtools:git-move")
+				->arg($product)
+				->run()
+			;
+			
+			// Execute git-commit
+			$this->taskExec('php')
+				->printOutput(false)
+				->dir(self::FORUM . 'xf2')
+				->arg("cmd.php")
+				->arg("ticktackk-devtools:git-commit")
+				->arg($product)
+				->option('message', 'Updated changelog / various changes')
+				->run()
+			;
+			
+			// Execute git-push
+			$this->taskExec('php')
+				->printOutput(false)
+				->dir(self::FORUM . 'xf2')
+				->arg("cmd.php")
+				->arg("ticktackk-devtools:git-push")
+				->arg($product)
+				->run()
+			;
+		}
+		else
+		{
+			$process = new Process('git status -s', $repoDir);
+			$process->run();
+			if ($process->isSuccessful() && $output = $process->getOutput())
+			{
+				$this->say($output);
+				
+				$this->taskGitStack()
+					->printOutput(false)
+					->dir($repoDir)
+					->add('-A')
+					->commit('Updated changelog / various changes')
+					->push()
+					->run()
+				;
+			}
+		}
+	}
+	
+	/**
+	 * @param string $onlyDir
+	 * @param bool $skipFlag
+	 */
+	protected function scanForConfigs($onlyDir = '', $skipFlag = false)
 	{
 		if ($onlyDir)
 		{
-			if (file_exists(self::SVN . $onlyDir . '/config.inc.php'))
+			if (file_exists(self::GIT . $onlyDir . '/config.inc.php'))
 			{
 				// Grab the configuration file
-				require(self::SVN . $onlyDir . '/config.inc.php');
+				require(self::GIT . $onlyDir . '/config.inc.php');
 			}
 		}
 		else
 		{
-			$d = dir(self::SVN);
+			$d = dir(self::GIT);
 			while (false !== ($entry = $d->read()))
 			{
 				if (
-					$entry{0} == '.'
-					OR !is_dir(self::SVN . $entry)
-					OR !file_exists(self::SVN . $entry . '/config.inc.php')
+					$entry[0] == '.'
+					OR !is_dir(self::GIT . $entry)
+					OR !file_exists(self::GIT . $entry . '/config.inc.php')
 				)
 				{
-					// Skip this
-					//$this->say("Skipping $entry...");
-
 					// Skip this
 					continue;
 				}
 
 				// Grab the configuration file
-				require(self::SVN . $entry . '/config.inc.php');
+				require(self::GIT . $entry . '/config.inc.php');
 			}
 			$d->close();
 		}
 	}
-
+	
+	/**
+	 * @param $pathToApplication
+	 * @param $version
+	 * @param array $replace
+	 */
 	protected function updateFramework($pathToApplication, $version, $replace = [])
 	{
-		$this->_mirrorDir(self::SVN . 'framework/framework/tags/' . $version, $pathToApplication);
-
+		$this->_mirrorDir(self::GIT . 'framework/' . $version, $pathToApplication);
+		
 		$d = new RecDir($pathToApplication . '/');
 		while (false !== ($file = $d->read()))
 		{
 			$this->taskReplaceInFile($file)
 				->from(array_keys($replace))
 				->to($replace)
-			->run();
+				->run();
 		}
 		$d->close();
 	}
-
+	
+	/**
+	 * @param $pathToApplication
+	 * @param $version
+	 * @param array $replace
+	 */
+	protected function updateFrameworkWithoutSymlink($pathToApplication, $version, $replace = [])
+	{
+		$this->_mirrorDir(self::FORUM . 'framework/' . $version, $pathToApplication);
+		
+		$d = new RecDir($pathToApplication . '/');
+		while (false !== ($file = $d->read()))
+		{
+			$this->taskReplaceInFile($file)
+				->from(array_keys($replace))
+				->to($replace)
+				->run();
+		}
+		$d->close();
+	}
+	
+	/**
+	 *
+	 */
 	protected function createSymlinks()
 	{
 		foreach ($this->dirsToScan as $folder => $dirs)
@@ -195,7 +465,10 @@ class RoboFile extends \Robo\Tasks
 			}
 		}
 	}
-
+	
+	/**
+	 * @param $opts
+	 */
 	protected function cleanSymlinks($opts)
 	{
 		$d = new RecDir(self::FORUM);
@@ -212,7 +485,10 @@ class RoboFile extends \Robo\Tasks
 		}
 		$d->close();
 	}
-
+	
+	/**
+	 *
+	 */
 	protected function checkSyntax()
 	{
 		$taskStack = $this->taskExecStack()->printed(false)->stopOnFail();
@@ -225,7 +501,7 @@ class RoboFile extends \Robo\Tasks
 				{
 					if (pathinfo($entry, PATHINFO_EXTENSION) == 'php')
 					{
-						$taskStack = $taskStack->exec('php -l ' . $entry);
+						$taskStack = $taskStack->exec('php -l "' . $entry . '"');
 					}
 				}
 				$d->close();
@@ -233,15 +509,11 @@ class RoboFile extends \Robo\Tasks
 		}
 		$taskStack->run();
 	}
-
-	protected function openDatabaseConnections()
-	{
-		// Open a couple DB connections
-		$this->vB3 = new PDO('mysql:dbname=vb3;host=localhost', 'root', 'revanza');
-		$this->vB4 = new PDO('mysql:dbname=vb4;host=localhost', 'root', 'revanza');
-		$this->vB5 = new PDO('mysql:dbname=vb5;host=localhost', 'root', 'revanza');
-	}
-
+	
+	/**
+	 * @param $dir
+	 * @param $folder
+	 */
 	protected function addDirToScan($dir, $folder)
 	{
 		if (!isset($this->dirsToScan[$folder]))
@@ -253,7 +525,11 @@ class RoboFile extends \Robo\Tasks
 		// Now store the dir
 		$this->dirsToScan[$folder][] = $dir;
 	}
-
+	
+	/**
+	 * @param $title
+	 * @param $body
+	 */
 	protected function notify($title, $body)
 	{
 		/** @var \Joli\JoliNotif\Notifier $notifier */
