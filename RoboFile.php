@@ -170,34 +170,12 @@ class RoboFile extends \Robo\Tasks
 				->printOutput(false)
 				->dir($repoDir)
 				->add('-A')
-				->commit('Updated changelog / various changes')
+				->commit('Updated changelog')
 				->push()
 				->run();
 		}
 		
-		if ($opts['repoDir'])
-		{
-			$dir = self::FORUM . 'xf2';
-			/*
-			// Execute bump version here
-			(new Process("php cmd.php xf-addon:bump-version $product --from-json", self::FORUM . 'xf2'))
-				->run();
-			*/
-			
-			// Execute export - move files to repo if possible
-			$this->taskExec('php')
-				->printOutput(false)
-				->dir($dir)
-				->arg("cmd.php")
-				->arg("ticktackk-devtools:better-export")
-				->arg($product)
-				->option('skip-export')
-				->option('skip-tests')
-				->option('release')
-				->run()
-			;
-		}
-		else
+		if (!$opts['repoDir'])
 		{
 			$process = new Process('git status -s', $repoDir);
 			$process->run();
