@@ -83,7 +83,7 @@ class RoboFile extends \Robo\Tasks
 		;
 		$this->output()->setVerbosity(OutputInterface::VERBOSITY_NORMAL);
 
-		/** @var \Robo\Collection\Collection $collection */
+		/** @var \Robo\Collection\CollectionBuilder $collection */
 		$collection = $this->collectionBuilder();
 
 		// Update changelog
@@ -107,8 +107,8 @@ class RoboFile extends \Robo\Tasks
 	 */
 	public function changeLog($product, $version, $opts = ['repoDir' => NULL, 'changeLogDir' => NULL])
 	{
-		/** @var \Robo\Collection\Collection $collection */
-		$collection = $this->collection();
+		/** @var \Robo\Collection\CollectionBuilder $collection */
+		$collection = $this->collectionBuilder();
 
 		$this->_changeLog($product, $version, $collection, $opts['repoDir'], $opts['changeLogDir']);
 
