@@ -50,71 +50,11 @@ class RoboFile extends \Robo\Tasks
 	
 	/**
 	 * @param $product
-	 * @param array $opts
-	 */
-	public function commit($product, $opts = ['dir' => NULL])
-	{
-		$dir = $opts['dir'] ?: self::GIT . $product;
-		
-		if ($opts['dir'])
-		{
-			// Execute export - move files to repo if possible
-			(new Process("php cmd.php ticktackk-devtools:better-export $product -mspr", self::FORUM . 'xf2'))
-				->run();
-		}
-		
-		$process = new Process('git status -s', $dir);
-		$process->run();
-		if ($process->isSuccessful())
-		{
-			$output = $process->getOutput();
-			if ($output)
-			{
-				$this->say($output);
-				
-				$result = $this->taskGitStack()
-					->printOutput(false)
-					->dir($dir)
-					->add('-A')
-					->run()
-				;
-				
-				if ($result->wasSuccessful())
-				{
-					$commitMessage = [];
-					while ($resp = $this->ask("Commit log entry: "))
-					{
-						$commitMessage[] = $resp;
-					}
-					
-					if (!$commitMessage)
-					{
-						// Default message
-						$commitMessage[] = 'Various changes';
-					}
-					
-					$message = \Robo\Common\ProcessUtils::escapeArgument(implode("\n", $commitMessage));
-					
-					$this->taskGitStack()
-						->printOutput(false)
-						->dir($dir)
-						->exec(['commit', '-m $' . $message, ""])
-						->push()
-						->run();
-				}
-			}
-		}
-	}
-	
-	/**
-	 * @param $product
 	 * @param $version
 	 * @param array $opts
 	 */
 	public function release($product, $version, $opts = ['repoDir' => NULL, 'changeLogDir' => NULL])
 	{
-		$ds = DIRECTORY_SEPARATOR;
-		
 		$version = ($version[0] != 'v' ? 'v' : '') . $version;
 		
 		if ($opts['repoDir'])
@@ -125,16 +65,7 @@ class RoboFile extends \Robo\Tasks
 		{
 			$repoDir = self::GIT . $product;
 		}
-		
-		if ($opts['changeLogDir'])
-		{
-			$changelogDir = $opts['changeLogDir'];
-		}
-		else
-		{
-			$changelogDir = $repoDir . $ds . $product;
-		}
-		
+
 		$this->output()->setVerbosity(OutputInterface::VERBOSITY_QUIET);
 		$this->taskGitStack()
 			->printOutput(false)
@@ -151,74 +82,12 @@ class RoboFile extends \Robo\Tasks
 			->run()
 		;
 		$this->output()->setVerbosity(OutputInterface::VERBOSITY_NORMAL);
-		
-		$changelogTask = $this->taskChangelog($changelogDir . $ds . 'CHANGELOG.md')
-			->version($version)
-		;
 
-		while ($resp = $this->ask("Changed in this release: "))
-		{
-			$changelogTask->change($resp);
-		}
-		
-		if ($changelogTask->getChanges())
-		{
-			$changelogTask->run();
+		/** @var \Robo\Collection\Collection $collection */
+		$collection = $this->collection();
 
-			// Commit change log
-			$this->taskGitStack()
-				->printOutput(false)
-				->dir($repoDir)
-				->add('-A')
-				->commit('Updated changelog')
-				->push()
-				->run();
-		}
-		
-		if (!$opts['repoDir'])
-		{
-			$process = new Process('git status -s', $repoDir);
-			$process->run();
-			if ($process->isSuccessful())
-			{
-				$output = $process->getOutput();
-				if ($output)
-				{
-					$this->say($output);
-					
-					$result = $this->taskGitStack()
-						->printOutput(false)
-						->dir($repoDir)
-						->add('-A')
-						->run()
-					;
-					
-					if ($result->wasSuccessful())
-					{
-						$commitMessage = [];
-						while ($resp = $this->ask("Commit log entry: "))
-						{
-							$commitMessage[] = $resp;
-						}
-						
-						if (!$commitMessage)
-						{
-							// Default message
-							$commitMessage[] = 'Various changes';
-						}
-						
-						$message = \Robo\Common\ProcessUtils::escapeArgument(implode("\n", $commitMessage));
-						
-						$this->taskGitStack()
-							->printOutput(false)
-							->dir($repoDir)
-							->exec(['commit', '-m $' . $message, ""])
-							->run()
-						;
-					}
-				}
-			}
-		}
+		// Update changelog
+		$this->_changeLog($product, $version, $collection, $opts['repoDir'], $opts['changeLogDir']);
 		
 		$this->taskGitStack()
 			->printOutput(false)
@@ -226,12 +95,12 @@ class RoboFile extends \Robo\Tasks
 			->exec(['flow', 'release', 'start', $version])
 			->exec(['flow', 'release', 'publish', $version])
 			->exec(['flow', 'release', 'finish', $version, '-m', $version, '--push', '--keepremote'])
-			->run()
+			->addToCollection($collection)
 		;
+
+		$collection->run();
 	}
-	
-	
-	
+
 	/**
 	 * @param $product
 	 * @param $version
@@ -239,92 +108,60 @@ class RoboFile extends \Robo\Tasks
 	 */
 	public function changeLog($product, $version, $opts = ['repoDir' => NULL, 'changeLogDir' => NULL])
 	{
+		/** @var \Robo\Collection\Collection $collection */
+		$collection = $this->collection();
+
+		$this->_changeLog($product, $version, $collection, $opts['repoDir'], $opts['changeLogDir']);
+
+		$collection->run();
+	}
+
+	/**
+	 * @param $product
+	 * @param $version
+	 * @param \Robo\Collection\Collection $collection
+	 * @param null $repoDir
+	 * @param null $changeLogDir
+	 */
+	protected function _changeLog($product, $version, \Robo\Collection\Collection $collection, $repoDir = NULL, $changeLogDir = NULL)
+	{
 		$ds = DIRECTORY_SEPARATOR;
-		
+
 		$version = ($version[0] != 'v' ? 'v' : '') . $version;
-		
-		if ($opts['repoDir'])
-		{
-			$repoDir = $opts['repoDir'];
-		}
-		else
+
+		if (!$repoDir)
 		{
 			$repoDir = self::GIT . $product;
 		}
-		
-		if ($opts['changeLogDir'])
+
+		if (!$changeLogDir)
 		{
-			$changelogDir = $opts['changeLogDir'];
+			$changeLogDir = $repoDir . $ds . $product;
 		}
-		else
-		{
-			$changelogDir = $repoDir . $ds . $product;
-		}
-		
-		$changelogTask = $this->taskChangelog($changelogDir . $ds . 'CHANGELOG.md')
+
+		$changeLogTask = $this->taskChangelog($changeLogDir . $ds . 'CHANGELOG.md')
 			->version($version)
 		;
-		
+
 		while ($resp = $this->ask("Changed in this release: "))
 		{
-			$changelogTask->change($resp);
+			$changeLogTask->change($resp);
 		}
-		
-		if ($changelogTask->getChanges())
+
+		if ($changeLogTask->getChanges())
 		{
-			$changelogTask->run();
-		}
-		
-		if ($opts['changeLogDir'])
-		{
-			// Execute git-move
-			$this->taskExec('php')
+			$changeLogTask->addToCollection($collection);
+
+			// Commit change log
+			$this->taskGitStack()
+				->stopOnFail()
 				->printOutput(false)
-				->dir(self::FORUM . 'xf2')
-				->arg("cmd.php")
-				->arg("ticktackk-devtools:git-move")
-				->arg($product)
-				->run()
+				->dir($repoDir)
+				->add('CHANGELOG.md')
+				->commit('Updated changelog')
+				->push()
+				->addToCollection($collection)
 			;
-			
-			// Execute git-commit
-			$this->taskExec('php')
-				->printOutput(false)
-				->dir(self::FORUM . 'xf2')
-				->arg("cmd.php")
-				->arg("ticktackk-devtools:git-commit")
-				->arg($product)
-				->option('message', 'Updated changelog / various changes')
-				->run()
-			;
-			
-			// Execute git-push
-			$this->taskExec('php')
-				->printOutput(false)
-				->dir(self::FORUM . 'xf2')
-				->arg("cmd.php")
-				->arg("ticktackk-devtools:git-push")
-				->arg($product)
-				->run()
-			;
-		}
-		else
-		{
-			$process = new Process('git status -s', $repoDir);
-			$process->run();
-			if ($process->isSuccessful() && $output = $process->getOutput())
-			{
-				$this->say($output);
-				
-				$this->taskGitStack()
-					->printOutput(false)
-					->dir($repoDir)
-					->add('-A')
-					->commit('Updated changelog / various changes')
-					->push()
-					->run()
-				;
-			}
 		}
 	}
 	
