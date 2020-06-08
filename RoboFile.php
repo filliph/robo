@@ -84,21 +84,20 @@ class RoboFile extends \Robo\Tasks
 		$this->output()->setVerbosity(OutputInterface::VERBOSITY_NORMAL);
 
 		/** @var \Robo\Collection\Collection $collection */
-		$collection = $this->collection();
+		$collection = $this->collectionBuilder();
 
 		// Update changelog
 		$this->_changeLog($product, $version, $collection, $opts['repoDir'], $opts['changeLogDir']);
-		
-		$this->taskGitStack()
+
+		$collection->taskGitStack()
 			->printOutput(false)
 			->dir($repoDir)
 			->exec(['flow', 'release', 'start', $version])
 			->exec(['flow', 'release', 'publish', $version])
 			->exec(['flow', 'release', 'finish', $version, '-m', $version, '--push', '--keepremote'])
-			->addToCollection($collection)
 		;
 
-		$collection->run();
+		return $collection->run();
 	}
 
 	/**
@@ -119,11 +118,11 @@ class RoboFile extends \Robo\Tasks
 	/**
 	 * @param $product
 	 * @param $version
-	 * @param \Robo\Collection\Collection $collection
+	 * @param \Robo\Collection\CollectionBuilder $collection
 	 * @param null $repoDir
 	 * @param null $changeLogDir
 	 */
-	protected function _changeLog($product, $version, \Robo\Collection\Collection $collection, $repoDir = NULL, $changeLogDir = NULL)
+	protected function _changeLog($product, $version, \Robo\Collection\CollectionBuilder $collection, $repoDir = NULL, $changeLogDir = NULL)
 	{
 		$ds = DIRECTORY_SEPARATOR;
 
@@ -150,17 +149,16 @@ class RoboFile extends \Robo\Tasks
 
 		if ($changeLogTask->getChanges())
 		{
-			$changeLogTask->addToCollection($collection);
+			$changeLogTask->run();
 
 			// Commit change log
-			$this->taskGitStack()
+			$collection->taskGitStack()
 				->stopOnFail()
 				->printOutput(false)
 				->dir($repoDir)
-				->add('CHANGELOG.md')
+				->add('**/CHANGELOG.md')
 				->commit('Updated changelog')
 				->push()
-				->addToCollection($collection)
 			;
 		}
 	}
