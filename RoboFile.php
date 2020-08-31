@@ -14,12 +14,11 @@ use Symfony\Component\Process\Process;
 
 class RoboFile extends \Robo\Tasks
 {
-	const SERVER = "/Users/Shared/www/";
-	const FORUM = "/Users/Shared/www/public_html/devboards/";
-	const GIT = "/Users/Shared/www/git/";
+	const FORUM = "/var/www/html/devboards/";
+	const GIT = "/var/www/git/";
 
 	protected $dirsToScan = [];
-	
+
 	/**
 	 *
 	 */
@@ -94,7 +93,10 @@ class RoboFile extends \Robo\Tasks
 			->dir($repoDir)
 			->exec(['flow', 'release', 'start', $version])
 			->exec(['flow', 'release', 'publish', $version])
-			->exec(['flow', 'release', 'finish', $version, '-m', $version, '--push', '--keepremote'])
+			->exec(['flow', 'release', 'finish', $version, '-m', $version, '--push', '--keepremote', '--nobackmerge'])
+			->checkout('develop')
+			->merge('master')
+			->push()
 		;
 
 		return $collection->run();
